@@ -121,51 +121,73 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun scanPhotosWithDepthInfo(): List<PhotoItem> = withContext(Dispatchers.IO) {
         val contentResolver = getApplication<Application>().contentResolver
         val photos = mutableListOf<PhotoItem>()
-        
+
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.SIZE,
-            MediaStore.Images.Media.DATE_ADDED
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.MIME_TYPE
         )
-        
+
+        // 只查询JPEG格式的照片，大小大于10MB
+        val selection = "${MediaStore.Images.Media.MIME_TYPE} IN (?, ?) AND ${MediaStore.Images.Media.SIZE} > ?"
+        val selectionArgs = arrayOf("image/jpeg", "image/jpg", (10 * 1024 * 1024).toString())
         val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
-        
+
         contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
-            null,
-            null,
+            selection,
+            selectionArgs,
             sortOrder
-        )?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-            
+        )?.use { queryResult ->
+            val idColumn = queryResult.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val nameColumn = queryResult.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            val sizeColumn = queryResult.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+            val mimeTypeColumn = queryResult.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
+
             var processedCount = 0
-            val totalCount = cursor.count
-            
-            while (cursor.moveToNext()) {
+            val totalCount = queryResult.count
+
+            Log.d("PhotoViewModel", "开始扫描，符合条件的照片总数: $totalCount")
+
+            while (queryResult.moveToNext()) {
                 processedCount++
-                if (processedCount % 10 == 0) {
+                if (processedCount % 5 == 0) { // 更频繁地更新进度
                     _uiState.value = PhotoUiState.ScanProgress(processedCount, totalCount)
                 }
-                
-                val id = cursor.getLong(idColumn)
-                val name = cursor.getString(nameColumn)
-                val size = cursor.getLong(sizeColumn)
+
+                val id = queryResult.getLong(idColumn)
+                val name = queryResult.getString(nameColumn)
+                val size = queryResult.getLong(sizeColumn)
+                val mimeType = queryResult.getString(mimeTypeColumn)
                 val contentUri = ContentUris.withAppendedId(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
                 )
-                
-                // 检查照片是否包含深度信息
-                if (containsDepthInfo(contentResolver, contentUri)) {
-                    photos.add(PhotoItem(id, contentUri, name, size))
+
+                // 再次验证文件大小（双重保险）
+                if (size > 5 * 1024 * 1024) {
+                    // 检查照片是否包含深度信息
+                    if (containsDepthInfo(contentResolver, contentUri)) {
+                        photos.add(PhotoItem(id, contentUri, name, size))
+                        Log.d("PhotoViewModel", "找到深度照片: $name (${formatFileSize(size)})")
+                    }
                 }
             }
         }
-        
+
+        Log.d("PhotoViewModel", "扫描完成，找到 ${photos.size} 张深度照片")
         photos
+    }
+
+    // 格式化文件大小的辅助函数
+    private fun formatFileSize(size: Long): String {
+        return when {
+            size < 1024 -> "${size}B"
+            size < 1024 * 1024 -> "${size / 1024}KB"
+            else -> "${size / (1024 * 1024)}MB"
+        }
     }
 
     // 检查照片是否包含深度信息

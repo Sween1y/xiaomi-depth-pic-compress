@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -318,7 +320,13 @@ fun ScanProgressState(progress: PhotoUiState.ScanProgress) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             CircularProgressIndicator(
-                progress = progress.current.toFloat() / progress.total.toFloat()
+                progress = {
+                    progress.current.toFloat() / progress.total.toFloat()
+                },
+                color = ProgressIndicatorDefaults.circularColor,
+                strokeWidth = ProgressIndicatorDefaults.CircularStrokeWidth,
+                trackColor = ProgressIndicatorDefaults.circularIndeterminateTrackColor,
+                strokeCap = ProgressIndicatorDefaults.CircularDeterminateStrokeCap,
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text("扫描进度: ${progress.current}/${progress.total}")
