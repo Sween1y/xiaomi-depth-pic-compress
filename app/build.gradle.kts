@@ -49,6 +49,16 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    
+    // ViewModel
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    
+    // 图片加载
+    implementation("io.coil-kt:coil-compose:2.5.0")
+    
+    // 元数据提取
+    implementation("com.drewnoakes:metadata-extractor:2.18.0")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
