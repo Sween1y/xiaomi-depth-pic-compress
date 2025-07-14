@@ -3,10 +3,10 @@ package com.sweeney.xiaomi_depth_pic_compress
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.exifinterface.media.ExifInterface
 import android.net.Uri
 import android.os.Environment
 import android.util.Log
-import androidx.exifinterface.media.ExifInterface
 import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.Metadata
 import java.io.ByteArrayOutputStream
