@@ -166,7 +166,7 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("小米深度照片压缩") },
+                title = { Text("小米人像照片压缩") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
