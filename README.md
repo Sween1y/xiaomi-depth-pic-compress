@@ -20,7 +20,8 @@
 
 ## 截图
 
-> （此处可插入应用截图，展示扫描、压缩、撤销等界面）
+<img src="https://github.com/user-attachments/assets/d8a18bee-4ec1-4afc-9931-761dcadba812" alt="PixPin_2025-07-14_21-51-40" width="400" height="900">
+
 
 ## 安装与运行
 
