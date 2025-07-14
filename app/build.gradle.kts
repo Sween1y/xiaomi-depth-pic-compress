@@ -59,6 +59,9 @@ dependencies {
     // 元数据提取
     implementation("com.drewnoakes:metadata-extractor:2.18.0")
     
+    // ExifInterface - Android原生EXIF处理
+    implementation("androidx.exifinterface:exifinterface:1.3.6")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

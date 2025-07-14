@@ -1,6 +1,7 @@
 package com.sweeney.xiaomi_depth_pic_compress
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -21,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ProgressIndicatorDefaults
@@ -40,6 +43,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.sweeney.xiaomi_depth_pic_compress.ui.theme.XiaomidepthpiccompressTheme
+import java.io.File
+import com.sweeney.xiaomi_depth_pic_compress.CompressionResult
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PhotoViewModel by viewModels()
@@ -47,7 +52,7 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        // 权限结果会在UI中处理
+
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -155,6 +160,8 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
     val scannedPhotos by viewModel.scannedPhotos.collectAsStateWithLifecycle()
     val selectedPhotos by viewModel.selectedPhotos.collectAsStateWithLifecycle()
     val removedPhotos by viewModel.removedPhotos.collectAsStateWithLifecycle()
+    val compressionResults by viewModel.compressionResults.collectAsStateWithLifecycle()
+    val totalSavedSpace by viewModel.totalSavedSpace.collectAsStateWithLifecycle()
     
     Scaffold(
         topBar = {
@@ -176,10 +183,20 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 uiState = uiState,
                 onScanClick = { viewModel.startScan() },
                 onProcessClick = { viewModel.startProcessing() },
+                onClearResults = { viewModel.clearCompressionResults() },
                 selectedCount = selectedPhotos.size,
-                totalCount = scannedPhotos.size
+                totalCount = scannedPhotos.size,
+                compressedCount = compressionResults.size,
+                totalSavedSpace = totalSavedSpace
             )
-            
+            // 只要有压缩结果就显示绿色卡片，并且只显示一次
+            if (compressionResults.isNotEmpty()) {
+                CompressionResultsSection(
+                    compressionResults = compressionResults,
+                    totalSavedSpace = totalSavedSpace,
+                    onClearResults = { viewModel.undoCompression() }
+                )
+            }
             // 状态显示
             when (uiState) {
                 is PhotoUiState.Idle -> {
@@ -191,7 +208,8 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 is PhotoUiState.ScanProgress -> {
                     ScanProgressState(uiState as PhotoUiState.ScanProgress)
                 }
-                is PhotoUiState.ScanComplete -> {
+                is PhotoUiState.ScanComplete, is PhotoUiState.Success -> {
+                    // 只显示照片网格，不再显示压缩结果卡片
                     PhotoGrid(
                         photos = scannedPhotos.filter { it.uri !in removedPhotos },
                         selectedPhotos = selectedPhotos,
@@ -211,9 +229,6 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 is PhotoUiState.ProcessProgress -> {
                     ProcessProgressState(uiState as PhotoUiState.ProcessProgress)
                 }
-                is PhotoUiState.Success -> {
-                    SuccessState(uiState as PhotoUiState.Success)
-                }
                 is PhotoUiState.Error -> {
                     ErrorState(uiState as PhotoUiState.Error)
                 }
@@ -222,13 +237,17 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
     }
 }
 
+@SuppressLint("DefaultLocale")
 @Composable
 fun ControlButtons(
     uiState: PhotoUiState,
     onScanClick: () -> Unit,
     onProcessClick: () -> Unit,
+    onClearResults: () -> Unit,
     selectedCount: Int,
-    totalCount: Int
+    totalCount: Int,
+    compressedCount: Int,
+    totalSavedSpace: Long
 ) {
     Card(
         modifier = Modifier
@@ -317,19 +336,53 @@ fun ScanProgressState(progress: PhotoUiState.ScanProgress) {
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(16.dp)
         ) {
+            // 大号进度条
             CircularProgressIndicator(
                 progress = {
                     progress.current.toFloat() / progress.total.toFloat()
                 },
-                color = ProgressIndicatorDefaults.circularColor,
-                strokeWidth = ProgressIndicatorDefaults.CircularStrokeWidth,
-                trackColor = ProgressIndicatorDefaults.circularIndeterminateTrackColor,
-                strokeCap = ProgressIndicatorDefaults.CircularDeterminateStrokeCap,
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 8.dp,
+                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                modifier = Modifier.size(120.dp)
             )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // 百分比显示
+            Text(
+                text = "${((progress.current.toFloat() / progress.total.toFloat()) * 100).toInt()}%",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            
             Spacer(modifier = Modifier.height(16.dp))
-            Text("扫描进度: ${progress.current}/${progress.total}")
+            
+            // 进度文本
+            Text(
+                text = "扫描进度: ${progress.current}/${progress.total}",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // 进度条
+            LinearProgressIndicator(
+                progress = {
+                    progress.current.toFloat() / progress.total.toFloat()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+            )
         }
     }
 }
@@ -357,13 +410,73 @@ fun ProcessProgressState(progress: PhotoUiState.ProcessProgress) {
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(16.dp)
         ) {
+            // 大号进度条
             CircularProgressIndicator(
-                progress = progress.current.toFloat() / progress.total.toFloat()
+                progress = {
+                    progress.current.toFloat() / progress.total.toFloat()
+                },
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 8.dp,
+                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                modifier = Modifier.size(120.dp)
             )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // 百分比显示
+            Text(
+                text = "${((progress.current.toFloat() / progress.total.toFloat()) * 100).toInt()}%",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            
             Spacer(modifier = Modifier.height(16.dp))
-            Text("处理进度: ${progress.current}/${progress.total}")
+            
+            // 进度文本
+            Text(
+                text = "处理进度: ${progress.current}/${progress.total}",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+            
+            if (progress.currentFileName.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text(
+                        text = progress.currentFileName,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // 进度条
+            LinearProgressIndicator(
+                progress = {
+                    progress.current.toFloat() / progress.total.toFloat()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+            )
         }
     }
 }
@@ -468,7 +581,7 @@ fun PhotoItem(
             .clip(RoundedCornerShape(8.dp))
             .border(
                 width = if (isSelected) 3.dp else 1.dp,
-                color = if (isRemoved) Color.Red else if (isSelected) Color.Blue else Color.Gray,
+                color = if (isRemoved) Color.Red else if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                 shape = RoundedCornerShape(8.dp)
             )
             .clickable { onClick() }
@@ -520,6 +633,118 @@ fun formatFileSize(size: Long): String {
         size < 1024 -> "${size}B"
         size < 1024 * 1024 -> "${size / 1024}KB"
         else -> "${size / (1024 * 1024)}MB"
+    }
+}
+
+@SuppressLint("DefaultLocale")
+@Composable
+fun CompressionResultsSection(
+    compressionResults: List<CompressionResult>,
+    totalSavedSpace: Long,
+    onClearResults: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Box(Modifier.fillMaxWidth()) {
+            // 清理按钮
+            Button(
+                onClick = onClearResults,
+//                colors = ButtonDefaults.buttonColors(
+//                    containerColor = MaterialTheme.colorScheme.errorContainer
+//                ),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .height(36.dp)
+                    .width(100.dp)
+            ) {
+                Text(
+                    "撤销",
+                    fontSize = 14.sp,
+
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+            }
+            Column(Modifier.padding(top = 8.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                Text(
+                    text = "已压缩 ${compressionResults.size} 张照片",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF2ECC40)
+                )
+                val savedSpaceGB = String.format("%.2f", totalSavedSpace / (1024.0 * 1024.0 * 1024.0))
+                Text(
+                    text = "总共节省了 $savedSpaceGB GB 空间",
+                    fontSize = 14.sp,
+                    color = Color(0xFF2ECC40),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(5),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.heightIn(max = 100.dp)
+                ) {
+                    items(compressionResults.take(10)) { result ->
+                        CompressionResultItem(result = result)
+                    }
+                }
+                if (compressionResults.size > 10) {
+                    Text(
+                        text = "还有 ${compressionResults.size - 10} 张照片...",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CompressionResultItem(result: CompressionResult) {
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(4.dp))
+            .border(
+                width = 1.dp,
+                color = Color.Green,
+                shape = RoundedCornerShape(4.dp)
+            )
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(result.compressedPath)
+                .size(100)
+                .build(),
+            contentDescription = "压缩后的照片",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        
+        // 节省空间信息
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .background(Color.Black.copy(alpha = 0.7f))
+                .padding(2.dp)
+        ) {
+            Text(
+                text = "-${formatFileSize(result.savedSpace)}",
+                color = Color.Green,
+                fontSize = 8.sp
+            )
+        }
     }
 }
 

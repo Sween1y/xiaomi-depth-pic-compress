@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
+import java.io.File
 
 sealed class PhotoUiState {
     data object Idle : PhotoUiState() // 初始空闲状态
@@ -29,7 +30,7 @@ sealed class PhotoUiState {
     data class ScanProgress(val current: Int, val total: Int) : PhotoUiState() // 扫描进度
     data class ScanComplete(val photos: List<PhotoItem>) : PhotoUiState() // 扫描完成，显示符合条件的照片
     data object Processing : PhotoUiState() // 处理中 (压缩中)
-    data class ProcessProgress(val current: Int, val total: Int) : PhotoUiState() // 处理进度
+    data class ProcessProgress(val current: Int, val total: Int, val currentFileName: String = "") : PhotoUiState() // 处理进度
     data class Success(val message: String) : PhotoUiState() // 操作成功 (例如压缩完成提示)
     data class Error(val message: String) : PhotoUiState() // 错误
 }
@@ -51,11 +52,22 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     private val _removedPhotos = MutableStateFlow<Set<Uri>>(emptySet())
     val removedPhotos: StateFlow<Set<Uri>> = _removedPhotos.asStateFlow()
 
+    // 存储压缩结果信息
+    private val _compressionResults = MutableStateFlow<List<CompressionResult>>(emptyList())
+    val compressionResults: StateFlow<List<CompressionResult>> = _compressionResults.asStateFlow()
+    
+    // 存储总节省空间
+    private val _totalSavedSpace = MutableStateFlow(0L)
+    val totalSavedSpace: StateFlow<Long> = _totalSavedSpace.asStateFlow()
+
     // 写入权限请求 (用于 RecoverableSecurityException，通常是修改文件时需要)
     val pendingWriteRequest = MutableStateFlow<IntentSender?>(null)
 
     // 扫描任务
     private var scanJob: Job? = null
+    
+    // 压缩器
+    private val photoCompressor = PhotoCompressor(application)
 
     // 开始扫描照片
     fun startScan() {
@@ -102,14 +114,41 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 _uiState.value = PhotoUiState.Processing
-                // TODO: 实现照片压缩逻辑
-                // 这里先模拟处理过程
+                
+                val compressionResults = mutableListOf<CompressionResult>()
+                var totalSavedSpace = 0L
+                
                 for (i in photosToProcess.indices) {
-                    _uiState.value = PhotoUiState.ProcessProgress(i + 1, photosToProcess.size)
-                    // 模拟处理延迟
-                    kotlinx.coroutines.delay(100)
+                    val photo = photosToProcess[i]
+                    
+                    // 更新进度状态，显示当前处理的文件名
+                    _uiState.value = PhotoUiState.ProcessProgress(i + 1, photosToProcess.size, "正在压缩: ${photo.name}")
+                    
+                    // 压缩照片
+                    val result = photoCompressor.compressPhoto(photo.uri)
+                    if (result != null) {
+                        compressionResults.add(result)
+                        totalSavedSpace += result.savedSpace
+                        Log.d("PhotoViewModel", "成功压缩照片: ${photo.name}, 节省空间: ${formatFileSize(result.savedSpace)}")
+                    } else {
+                        Log.e("PhotoViewModel", "压缩照片失败: ${photo.name}")
+                    }
                 }
-                _uiState.value = PhotoUiState.Success("成功处理了 ${photosToProcess.size} 张照片")
+                
+                // 更新压缩结果
+                _compressionResults.value = compressionResults
+                _totalSavedSpace.value = totalSavedSpace
+                
+                val successCount = compressionResults.size
+                val totalCount = photosToProcess.size
+                val savedSpaceGB = String.format("%.2f", totalSavedSpace / (1024.0 * 1024.0 * 1024.0))
+                
+                if (successCount == totalCount) {
+                    _uiState.value = PhotoUiState.Success("成功压缩了 $successCount 张照片，总共节省了 ${savedSpaceGB}GB 空间")
+                } else {
+                    _uiState.value = PhotoUiState.Success("成功压缩了 $successCount/$totalCount 张照片，${totalCount - successCount} 张失败，总共节省了 ${savedSpaceGB}GB 空间")
+                }
+                
             } catch (e: Exception) {
                 Log.e("PhotoViewModel", "处理失败", e)
                 _uiState.value = PhotoUiState.Error("处理失败: ${e.message}")
@@ -130,9 +169,9 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
             MediaStore.Images.Media.MIME_TYPE
         )
 
-        // 只查询JPEG格式的照片，大小大于10MB
+        // 只查询JPEG格式的照片
         val selection = "${MediaStore.Images.Media.MIME_TYPE} IN (?, ?) AND ${MediaStore.Images.Media.SIZE} > ?"
-        val selectionArgs = arrayOf("image/jpeg", "image/jpg", (10 * 1024 * 1024).toString())
+        val selectionArgs = arrayOf("image/jpeg", "image/jpg", (Constants.Compression.MIN_FILE_SIZE_MB * 1024 * 1024).toString())
         val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
 
         contentResolver.query(
@@ -154,7 +193,7 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
 
             while (queryResult.moveToNext()) {
                 processedCount++
-                if (processedCount % 5 == 0) { // 更频繁地更新进度
+                if (processedCount % 10 == 0) { // 减少进度更新频率，提高效率
                     _uiState.value = PhotoUiState.ScanProgress(processedCount, totalCount)
                 }
 
@@ -166,13 +205,10 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
                 )
 
-                // 再次验证文件大小（双重保险）
-                if (size > 5 * 1024 * 1024) {
-                    // 检查照片是否包含深度信息
-                    if (containsDepthInfo(contentResolver, contentUri)) {
-                        photos.add(PhotoItem(id, contentUri, name, size))
-                        Log.d("PhotoViewModel", "找到深度照片: $name (${formatFileSize(size)})")
-                    }
+                // 检查照片是否包含深度信息
+                if (containsDepthInfo(contentResolver, contentUri)) {
+                    photos.add(PhotoItem(id, contentUri, name, size))
+                    Log.d("PhotoViewModel", "找到深度照片: $name (${formatFileSize(size)})")
                 }
             }
         }
@@ -181,14 +217,7 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         photos
     }
 
-    // 格式化文件大小的辅助函数
-    private fun formatFileSize(size: Long): String {
-        return when {
-            size < 1024 -> "${size}B"
-            size < 1024 * 1024 -> "${size / 1024}KB"
-            else -> "${size / (1024 * 1024)}MB"
-        }
-    }
+
 
     // 检查照片是否包含深度信息
     private fun containsDepthInfo(contentResolver: ContentResolver, uri: Uri): Boolean {
@@ -204,7 +233,7 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    //查询我所需要的照片
+    // 是否属于Xiaomi的深度信息
     private fun containsSpecificXmpInfo(metadata: Metadata): Boolean {
         val xmpDirectory = metadata.getFirstDirectoryOfType(XmpDirectory::class.java) ?: return false
         val xmpMeta = xmpDirectory.xmpMeta ?: return false
@@ -222,6 +251,39 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
             return true
         }
         return false
+    }
+
+    // 格式化文件大小
+    private fun formatFileSize(size: Long): String {
+        return when {
+            size < 1024 -> "${size}B"
+            size < 1024 * 1024 -> "${size / 1024}KB"
+            size < 1024 * 1024 * 1024 -> "${size / (1024 * 1024)}MB"
+            else -> String.format("%.2fGB", size / (1024.0 * 1024.0 * 1024.0))
+        }
+    }
+    
+    // 清理压缩结果
+    fun clearCompressionResults() {
+        _compressionResults.value = emptyList()
+        _totalSavedSpace.value = 0L
+    }
+
+    // 撤销压缩，删除所有压缩后的图片并清空压缩结果
+    fun undoCompression() {
+        val results = _compressionResults.value
+        var deletedCount = 0
+        for (result in results) {
+            val file = File(result.compressedPath)
+            if (FileUtils.deleteFileSafely(file)) {
+                deletedCount++
+            } else {
+                Log.w(Constants.LogTags.PHOTO_VIEW_MODEL, "删除压缩文件失败: ${file.absolutePath}")
+            }
+        }
+        _compressionResults.value = emptyList()
+        _totalSavedSpace.value = 0L
+        Log.d(Constants.LogTags.PHOTO_VIEW_MODEL, "撤销压缩，删除了 $deletedCount 个压缩文件")
     }
 
     override fun onCleared() {
