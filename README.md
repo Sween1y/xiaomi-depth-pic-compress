@@ -1,8 +1,8 @@
-# 小米景深照片压缩工具
+# 小米人像/景深照片压缩工具
 
 ## 项目简介
 
-本项目是一个专为小米手机（小米14 Ultra）用户设计的**景深照片批量压缩工具**。  
+这是一个专为小米手机（小米14 Ultra）用户设计的**人像/景深照片批量压缩工具**。  
 它可以帮助你一键扫描、筛选并压缩手机中所有带有景深信息（人像模式）的照片，释放大量存储空间。
 
 ## 开发初衷
@@ -42,9 +42,9 @@
 
 - Jetpack Compose
 - Material3
-- Coil（图片加载）
-- metadata-extractor（照片元数据解析）
-- ExifInterface（EXIF信息处理）
+- Coil
+- metadata-extractor
+- ExifInterface
 
 详细依赖见 [`app/build.gradle.kts`](app/build.gradle.kts)。
 
