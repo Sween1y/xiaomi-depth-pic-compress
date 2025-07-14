@@ -1,5 +1,6 @@
 package com.sweeney.xiaomi_depth_pic_compress
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ContentResolver
 import android.content.ContentUris
@@ -238,14 +239,12 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         val xmpDirectory = metadata.getFirstDirectoryOfType(XmpDirectory::class.java) ?: return false
         val xmpMeta = xmpDirectory.xmpMeta ?: return false
 
-        val xiaomiImageNamespace = "http://ns.xiaomi.com/photos/1.0/camera/"
-        val xiaomiXmpPropertyName = "MiCamera:XMPMeta"
 
-        if (!xmpMeta.doesPropertyExist(xiaomiImageNamespace, xiaomiXmpPropertyName)) {
+        if (!xmpMeta.doesPropertyExist(Constants.Scan.XIAOMI_IMAGE_NAMESPACE, Constants.Scan.XIAOMI_XMP_PROPERTY_NAME)) {
             return false
         }
 
-        val propertyValue = xmpMeta.getPropertyString(xiaomiImageNamespace, xiaomiXmpPropertyName)
+        val propertyValue = xmpMeta.getPropertyString(Constants.Scan.XIAOMI_IMAGE_NAMESPACE, Constants.Scan.XIAOMI_XMP_PROPERTY_NAME)
         if (propertyValue.contains("depthmap", ignoreCase = true)) {
             Log.d("PhotoViewModel", "Found Xiaomi Depth Effect via XMP property: $propertyValue")
             return true
@@ -254,6 +253,7 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // 格式化文件大小
+    @SuppressLint("DefaultLocale")
     private fun formatFileSize(size: Long): String {
         return when {
             size < 1024 -> "${size}B"
