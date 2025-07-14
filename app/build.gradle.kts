@@ -53,6 +53,10 @@ dependencies {
     // ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     
+    // 协程
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+    
     // 图片加载
     implementation("io.coil-kt:coil-compose:2.5.0")
     

@@ -47,15 +47,15 @@ class PhotoCompressor(private val context: Context) {
     suspend fun compressPhoto(sourceUri: Uri): CompressionResult? {
         return try {
             Log.d(TAG, "开始压缩照片: $sourceUri")
-            
+
             // 1. 读取原始照片和元数据
             val (bitmap, originalMetadata) = readPhotoWithMetadata(sourceUri)
                 ?: return null
-            
+
             // 2. 获取原始文件信息
             val sourceFile = getFileFromUri(sourceUri)
             val originalSize = sourceFile?.length() ?: 0L
-            
+
             // 3. 创建压缩后的照片
             val compressedFile = createCompressedPhoto(sourceUri, bitmap, originalMetadata)
             val compressedSize = compressedFile.length()
@@ -82,15 +82,15 @@ class PhotoCompressor(private val context: Context) {
     /**
      * 读取照片和元数据
      */
-    private fun readPhotoWithMetadata(uri: Uri): Pair<Bitmap, Metadata>? {
+    private suspend fun readPhotoWithMetadata(uri: Uri): Pair<Bitmap, Metadata>? {
         return try {
             val contentResolver = context.contentResolver
-            
+
             // 读取元数据
             val metadata = contentResolver.openInputStream(uri)?.use { inputStream ->
                 ImageMetadataReader.readMetadata(inputStream)
             } ?: throw Exception("无法读取照片元数据")
-            
+
             // 读取图片
             val bitmap = contentResolver.openInputStream(uri)?.use { inputStream ->
                 BitmapFactory.decodeStream(inputStream)
@@ -106,14 +106,14 @@ class PhotoCompressor(private val context: Context) {
     /**
      * 创建压缩后的照片
      */
-    private fun createCompressedPhoto(sourceUri: Uri, bitmap: Bitmap, originalMetadata: Metadata): File {
+    private suspend fun createCompressedPhoto(sourceUri: Uri, bitmap: Bitmap, originalMetadata: Metadata): File {
         val sourceFile = getFileFromUri(sourceUri)
             ?: throw Exception("无法获取原始文件路径")
         
         if (!sourceFile.exists()) {
             throw Exception("原始文件不存在")
         }
-        
+
         // 生成输出文件名
         val outputFile = generateOutputFile(sourceFile)
         
@@ -124,12 +124,12 @@ class PhotoCompressor(private val context: Context) {
                 Log.d(TAG, "使用EXIF元数据处理器完成压缩")
                 outputFile
             }
-            
-            // 策略2: 简单元数据处理器
-            trySimpleCompression(sourceFile, bitmap, outputFile) -> {
-                Log.d(TAG, "使用简单元数据处理器完成压缩")
-                outputFile
-            }
+//
+//            // 策略2: 简单元数据处理器
+//            trySimpleCompression(sourceFile, bitmap, outputFile) -> {
+//                Log.d(TAG, "使用简单元数据处理器完成压缩")
+//                outputFile
+//            }
             
             // 策略3: 基础压缩（兜底方案）
             else -> {

@@ -2,10 +2,13 @@ package com.sweeney.xiaomi_depth_pic_compress
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -24,6 +27,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.ButtonDefaults
+import com.sweeney.xiaomi_depth_pic_compress.PhotoUiState
 import androidx.compose.material3.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ProgressIndicatorDefaults
@@ -40,11 +45,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.util.Log
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.sweeney.xiaomi_depth_pic_compress.ui.theme.XiaomidepthpiccompressTheme
 import java.io.File
 import com.sweeney.xiaomi_depth_pic_compress.CompressionResult
+import androidx.core.net.toUri
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PhotoViewModel by viewModels()
@@ -52,7 +59,15 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-
+        Log.d("MainActivity", "权限请求结果: $isGranted")
+        // 权限请求完成后，重新检查权限状态
+        checkAndRequestNextPermission()
+    }
+    
+    private val requestManageStorageLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.d("MainActivity", "管理存储权限请求结果: ${result.resultCode}")
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,8 +79,49 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     onRequestPermission = { permission ->
                         requestPermissionLauncher.launch(permission)
+                    },
+                    onRequestManageStorage = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            try {
+                                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                                intent.data = Uri.parse("package:$packageName")
+                                requestManageStorageLauncher.launch(intent)
+                            } catch (e: Exception) {
+                                Log.w("MainActivity", "无法跳转到应用特定权限页面，尝试跳转到通用权限页面", e)
+                                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                                requestManageStorageLauncher.launch(intent)
+                            }
+                        }
+                    },
+                    onCheckAndRequestPermissions = {
+                        checkAndRequestNextPermission()
                     }
                 )
+            }
+        }
+    }
+    
+    // 检查并请求下一个需要的权限
+    private fun checkAndRequestNextPermission() {
+        val readPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        val writePermission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+        
+        when {
+            ContextCompat.checkSelfPermission(this, readPermission) != PackageManager.PERMISSION_GRANTED -> {
+                Log.d("MainActivity", "请求读取权限: $readPermission")
+                requestPermissionLauncher.launch(readPermission)
+            }
+            ContextCompat.checkSelfPermission(this, writePermission) != PackageManager.PERMISSION_GRANTED && 
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q -> {
+                Log.d("MainActivity", "请求写入权限: $writePermission")
+                requestPermissionLauncher.launch(writePermission)
+            }
+            else -> {
+                Log.d("MainActivity", "所有权限已授予")
             }
         }
     }
@@ -74,7 +130,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PhotoApp(
     viewModel: PhotoViewModel,
-    onRequestPermission: (String) -> Unit
+    onRequestPermission: (String) -> Unit,
+    onRequestManageStorage: () -> Unit,
+    onCheckAndRequestPermissions: () -> Unit
 ) {
     val context = LocalContext.current
     val readPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -82,36 +140,54 @@ fun PhotoApp(
     } else {
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
+    val writePermission = Manifest.permission.WRITE_EXTERNAL_STORAGE
     
-    var hasPermission by remember {
+    var hasReadPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, readPermission) == PackageManager.PERMISSION_GRANTED
         )
     }
     
+    var hasWritePermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, writePermission) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    
+    // 对于删除相册照片，我们可以使用 MediaStore API，不需要 MANAGE_EXTERNAL_STORAGE 权限
+    // Android 10+ 不需要 WRITE_EXTERNAL_STORAGE 权限
+    val hasAllPermissions = hasReadPermission && (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q || hasWritePermission)
+    
     // 监听权限变化
     LaunchedEffect(Unit) {
-        if (!hasPermission) {
-            onRequestPermission(readPermission)
-        }
+        onCheckAndRequestPermissions()
     }
     
     // 定期检查权限状态
     LaunchedEffect(Unit) {
         while (true) {
-            val currentPermission = ContextCompat.checkSelfPermission(context, readPermission) == PackageManager.PERMISSION_GRANTED
-            if (currentPermission != hasPermission) {
-                hasPermission = currentPermission
+            val currentReadPermission = ContextCompat.checkSelfPermission(context, readPermission) == PackageManager.PERMISSION_GRANTED
+            val currentWritePermission = ContextCompat.checkSelfPermission(context, writePermission) == PackageManager.PERMISSION_GRANTED
+            
+            if (currentReadPermission != hasReadPermission) {
+                Log.d("PhotoApp", "读取权限状态变化: $hasReadPermission -> $currentReadPermission")
+                hasReadPermission = currentReadPermission
             }
-            kotlinx.coroutines.delay(500) // 每500ms检查一次
+            if (currentWritePermission != hasWritePermission) {
+                Log.d("PhotoApp", "写入权限状态变化: $hasWritePermission -> $currentWritePermission")
+                hasWritePermission = currentWritePermission
+            }
+            kotlinx.coroutines.delay(1000) // 每1秒检查一次
         }
     }
     
-    if (hasPermission) {
+    if (hasAllPermissions) {
         PhotoScreen(viewModel = viewModel)
     } else {
         PermissionScreen(
-            onRequestPermission = { onRequestPermission(readPermission) }
+            onRequestPermission = { 
+                onCheckAndRequestPermissions()
+            }
         )
     }
 }
@@ -139,7 +215,7 @@ fun PermissionScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "此应用需要访问您的相册来扫描包含深度信息的照片",
+                    text = "此应用需要访问您的相册来扫描包含深度信息的照片，并保存压缩后的照片",
                     fontSize = 14.sp,
                     color = Color.Gray,
                     textAlign = TextAlign.Center
@@ -183,7 +259,6 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 uiState = uiState,
                 onScanClick = { viewModel.startScan() },
                 onProcessClick = { viewModel.startProcessing() },
-                onClearResults = { viewModel.clearCompressionResults() },
                 selectedCount = selectedPhotos.size,
                 totalCount = scannedPhotos.size,
                 compressedCount = compressionResults.size,
@@ -194,6 +269,7 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 CompressionResultsSection(
                     compressionResults = compressionResults,
                     totalSavedSpace = totalSavedSpace,
+                    uiState = uiState,
                     onClearResults = { viewModel.undoCompression() }
                 )
             }
@@ -208,8 +284,17 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 is PhotoUiState.ScanProgress -> {
                     ScanProgressState(uiState as PhotoUiState.ScanProgress)
                 }
-                is PhotoUiState.ScanComplete, is PhotoUiState.Success -> {
-                    // 只显示照片网格，不再显示压缩结果卡片
+                is PhotoUiState.Processing -> {
+                    ProcessingState()
+                }
+                is PhotoUiState.ProcessProgress -> {
+                    ProcessProgressState(
+                        progress = uiState as PhotoUiState.ProcessProgress,
+                        onCancel = { viewModel.cancelProcessing() }
+                    )
+                }
+                is PhotoUiState.ScanComplete -> {
+                    // 扫描完成，显示照片网格
                     PhotoGrid(
                         photos = scannedPhotos.filter { it.uri !in removedPhotos },
                         selectedPhotos = selectedPhotos,
@@ -223,11 +308,20 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                         }
                     )
                 }
-                is PhotoUiState.Processing -> {
-                    ProcessingState()
-                }
-                is PhotoUiState.ProcessProgress -> {
-                    ProcessProgressState(uiState as PhotoUiState.ProcessProgress)
+                is PhotoUiState.Success -> {
+                    // 处理完成，显示照片网格
+                    PhotoGrid(
+                        photos = scannedPhotos.filter { it.uri !in removedPhotos },
+                        selectedPhotos = selectedPhotos,
+                        removedPhotos = removedPhotos,
+                        onPhotoClick = { photo ->
+                            if (photo.uri in removedPhotos) {
+                                viewModel.restorePhoto(photo.uri)
+                            } else {
+                                viewModel.removePhoto(photo.uri)
+                            }
+                        }
+                    )
                 }
                 is PhotoUiState.Error -> {
                     ErrorState(uiState as PhotoUiState.Error)
@@ -243,7 +337,6 @@ fun ControlButtons(
     uiState: PhotoUiState,
     onScanClick: () -> Unit,
     onProcessClick: () -> Unit,
-    onClearResults: () -> Unit,
     selectedCount: Int,
     totalCount: Int,
     compressedCount: Int,
@@ -253,7 +346,7 @@ fun ControlButtons(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -264,25 +357,27 @@ fun ControlButtons(
             ) {
                 Button(
                     onClick = onScanClick,
-                    enabled = uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing,
-                    modifier = Modifier.weight(1f)
+                    enabled = uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing && uiState !is PhotoUiState.ProcessProgress,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp) // 添加统一的圆角
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("扫描照片")
                 }
-                
+
                 Spacer(modifier = Modifier.width(16.dp))
-                
+
                 Button(
                     onClick = onProcessClick,
-                    enabled = selectedCount > 0 && uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing,
-                    modifier = Modifier.weight(1f)
+                    enabled = selectedCount > 0 && uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing && uiState !is PhotoUiState.ProcessProgress,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp) // 添加统一的圆角
                 ) {
                     Text("处理照片 ($selectedCount)")
                 }
             }
-            
+
             if (totalCount > 0) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -371,18 +466,7 @@ fun ScanProgressState(progress: PhotoUiState.ScanProgress) {
             )
             
             Spacer(modifier = Modifier.height(16.dp))
-            
-            // 进度条
-            LinearProgressIndicator(
-                progress = {
-                    progress.current.toFloat() / progress.total.toFloat()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-            )
+
         }
     }
 }
@@ -404,7 +488,10 @@ fun ProcessingState() {
 }
 
 @Composable
-fun ProcessProgressState(progress: PhotoUiState.ProcessProgress) {
+fun ProcessProgressState(
+    progress: PhotoUiState.ProcessProgress,
+    onCancel: () -> Unit = {}
+) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -465,18 +552,19 @@ fun ProcessProgressState(progress: PhotoUiState.ProcessProgress) {
             }
             
             Spacer(modifier = Modifier.height(16.dp))
-            
-            // 进度条
-            LinearProgressIndicator(
-                progress = {
-                    progress.current.toFloat() / progress.total.toFloat()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-            )
+
+            // 取消按钮
+            Button(
+                onClick = onCancel,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                )
+            ) {
+                Icon(Icons.Default.Close, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("取消处理")
+            }
         }
     }
 }
@@ -641,6 +729,7 @@ fun formatFileSize(size: Long): String {
 fun CompressionResultsSection(
     compressionResults: List<CompressionResult>,
     totalSavedSpace: Long,
+    uiState: PhotoUiState,
     onClearResults: () -> Unit
 ) {
     Card(
@@ -656,9 +745,17 @@ fun CompressionResultsSection(
             // 清理按钮
             Button(
                 onClick = onClearResults,
-//                colors = ButtonDefaults.buttonColors(
-//                    containerColor = MaterialTheme.colorScheme.errorContainer
-//                ),
+                enabled = uiState !is PhotoUiState.Processing && uiState !is PhotoUiState.ProcessProgress,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (uiState is PhotoUiState.Processing || uiState is PhotoUiState.ProcessProgress) 
+                        MaterialTheme.colorScheme.surfaceVariant 
+                    else 
+                        MaterialTheme.colorScheme.errorContainer,
+                    contentColor = if (uiState is PhotoUiState.Processing || uiState is PhotoUiState.ProcessProgress) 
+                        MaterialTheme.colorScheme.onSurfaceVariant 
+                    else 
+                        MaterialTheme.colorScheme.onErrorContainer
+                ),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(8.dp)
@@ -666,9 +763,8 @@ fun CompressionResultsSection(
                     .width(100.dp)
             ) {
                 Text(
-                    "撤销",
+                    if (uiState is PhotoUiState.Processing || uiState is PhotoUiState.ProcessProgress) "撤销中..." else "撤销",
                     fontSize = 14.sp,
-
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center
                 )

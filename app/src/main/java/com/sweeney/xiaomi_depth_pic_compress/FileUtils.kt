@@ -95,9 +95,18 @@ object FileUtils {
      */
     fun deleteFileSafely(file: File): Boolean {
         return try {
+            Log.d(TAG, "开始删除文件: ${file.absolutePath}")
+            Log.d(TAG, "文件存在: ${file.exists()}")
+            Log.d(TAG, "是文件: ${file.isFile}")
+            Log.d(TAG, "可读: ${file.canRead()}")
+            Log.d(TAG, "可写: ${file.canWrite()}")
+            
             if (file.exists() && file.isFile) {
-                file.delete()
+                val result = file.delete()
+                Log.d(TAG, "删除操作结果: $result")
+                result
             } else {
+                Log.d(TAG, "文件不存在或不是文件，认为删除成功")
                 true // 文件不存在，认为删除成功
             }
         } catch (e: Exception) {
