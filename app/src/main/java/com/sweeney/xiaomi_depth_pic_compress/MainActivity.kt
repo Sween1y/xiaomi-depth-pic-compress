@@ -3,17 +3,18 @@ package com.sweeney.xiaomi_depth_pic_compress
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,6 +44,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -65,6 +67,18 @@ class MainActivity : ComponentActivity() {
         Log.d("MainActivity", "管理存储权限请求结果: ${result.resultCode}")
     }
     
+    val deletePhotosLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            Log.d("MainActivity", "照片删除成功")
+            viewModel.onPhotosDeleted()
+        } else {
+            Log.d("MainActivity", "照片删除被取消或失败")
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -193,7 +207,14 @@ fun PhotoApp(
     }
     
     if (hasAllPermissions) {
-        PhotoScreen(viewModel = viewModel)
+        PhotoScreen(
+            viewModel = viewModel,
+            onDeletePhotos = { intentSender ->
+                (context as? MainActivity)?.deletePhotosLauncher?.launch(
+                    IntentSenderRequest.Builder(intentSender).build()
+                )
+            }
+        )
     } else {
         PermissionScreen(
             onRequestPermission = { 
@@ -240,15 +261,22 @@ fun PermissionScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.R)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PhotoScreen(viewModel: PhotoViewModel) {
+fun PhotoScreen(
+    viewModel: PhotoViewModel,
+    onDeletePhotos: (IntentSender) -> Unit
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val scannedPhotos by viewModel.scannedPhotos.collectAsStateWithLifecycle()
     val selectedPhotos by viewModel.selectedPhotos.collectAsStateWithLifecycle()
     val removedPhotos by viewModel.removedPhotos.collectAsStateWithLifecycle()
     val compressionResults by viewModel.compressionResults.collectAsStateWithLifecycle()
     val totalSavedSpace by viewModel.totalSavedSpace.collectAsStateWithLifecycle()
+    
+    // 删除确认对话框状态
+    var showDeleteDialog by remember { mutableStateOf(false) }
     
     Scaffold(
         topBar = {
@@ -272,6 +300,7 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 onProcessClick = { viewModel.startProcessing() },
                 onSelectAllClick = { viewModel.selectAllPhotos() },
                 onInvertSelectionClick = { viewModel.invertPhotoSelection() },
+                onDeleteClick = { showDeleteDialog = true },
                 selectedCount = selectedPhotos.size,
                 totalCount = scannedPhotos.size,
                 compressedCount = compressionResults.size,
@@ -341,6 +370,23 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 }
             }
         }
+        
+        // 删除确认对话框
+        if (showDeleteDialog) {
+            DeleteConfirmationDialog(
+                selectedCount = selectedPhotos.size,
+                onConfirm = {
+                    showDeleteDialog = false
+                    val intentSender = viewModel.deleteSelectedPhotos()
+                    if (intentSender != null) {
+                        onDeletePhotos(intentSender)
+                    }
+                },
+                onDismiss = {
+                    showDeleteDialog = false
+                }
+            )
+        }
     }
 }
 
@@ -352,6 +398,7 @@ fun ControlButtons(
     onProcessClick: () -> Unit,
     onSelectAllClick: () -> Unit,
     onInvertSelectionClick: () -> Unit,
+    onDeleteClick: () -> Unit,
     selectedCount: Int,
     totalCount: Int,
     compressedCount: Int,
@@ -418,6 +465,25 @@ fun ControlButtons(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("反选")
+                    }
+                }
+                
+                // 添加删除按钮
+                if (selectedCount > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = onDeleteClick,
+                        enabled = uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing && uiState !is PhotoUiState.ProcessProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("删除选中照片 ($selectedCount)")
                     }
                 }
                 
@@ -918,5 +984,50 @@ fun CompressionResultItem(result: CompressionResult) {
             )
         }
     }
+}
+
+@Composable
+fun DeleteConfirmationDialog(
+    selectedCount: Int,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "确认删除",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.error
+            )
+        },
+        text = {
+            Text(
+                text = "您即将删除 $selectedCount 张景深照片，此操作不可逆！\n\n删除后这些照片将无法恢复，请确认您真的要删除这些照片吗？",
+                fontSize = 16.sp,
+                lineHeight = 24.sp
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
+                )
+            ) {
+                Text("确认删除")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.error,
+        textContentColor = MaterialTheme.colorScheme.onSurface
+    )
 }
 

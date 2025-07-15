@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.drew.imaging.ImageMetadataReader
@@ -458,6 +459,52 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    // 删除选中的原始照片（使用MediaStore.createDeleteRequest）
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun deleteSelectedPhotos(): IntentSender? {
+        val photosToDelete = _scannedPhotos.value.filter { photo ->
+            photo.uri in _selectedPhotos.value && photo.uri !in _removedPhotos.value
+        }
+
+        if (photosToDelete.isEmpty()) {
+            Log.d("PhotoViewModel", "没有选中的照片需要删除")
+            return null
+        }
+
+        return try {
+            val contentResolver = getApplication<Application>().contentResolver
+            val uris = photosToDelete.map { it.uri }
+            
+            // 使用MediaStore.createDeleteRequest创建删除请求
+            val deleteRequest = MediaStore.createDeleteRequest(contentResolver, uris)
+            
+            Log.d("PhotoViewModel", "创建删除请求，准备删除 ${photosToDelete.size} 张照片")
+            deleteRequest.intentSender
+        } catch (e: Exception) {
+            Log.e("PhotoViewModel", "创建删除请求失败", e)
+            null
+        }
+    }
+
+    // 删除照片后的回调处理
+    fun onPhotosDeleted() {
+        // 从扫描结果中移除已删除的照片
+        val deletedUris = _selectedPhotos.value
+        _scannedPhotos.update { photos ->
+            photos.filter { it.uri !in deletedUris }
+        }
+        
+        // 清空选中状态
+        _selectedPhotos.value = emptySet()
+        
+        // 从移除列表中移除已删除的照片
+        _removedPhotos.update { removed ->
+            removed - deletedUris
+        }
+        
+        Log.d("PhotoViewModel", "照片删除完成，更新UI状态")
     }
 
     override fun onCleared() {
