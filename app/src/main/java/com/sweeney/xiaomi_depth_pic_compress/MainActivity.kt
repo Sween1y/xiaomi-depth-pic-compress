@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.compose.material.icons.filled.Done
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -103,6 +104,7 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
         val writePermission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+        val mediaLocationPermission = Manifest.permission.ACCESS_MEDIA_LOCATION
         
         when {
             ContextCompat.checkSelfPermission(this, readPermission) != PackageManager.PERMISSION_GRANTED -> {
@@ -114,6 +116,10 @@ class MainActivity : ComponentActivity() {
                 Log.d("MainActivity", "请求写入权限: $writePermission")
                 requestPermissionLauncher.launch(writePermission)
             }
+            ContextCompat.checkSelfPermission(this, mediaLocationPermission) != PackageManager.PERMISSION_GRANTED -> {
+                Log.d("MainActivity", "请求媒体位置权限: $mediaLocationPermission")
+                requestPermissionLauncher.launch(mediaLocationPermission)
+            }
             else -> {
                 Log.d("MainActivity", "所有权限已授予")
             }
@@ -121,6 +127,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @Composable
 fun PhotoApp(
     viewModel: PhotoViewModel,
@@ -135,6 +142,7 @@ fun PhotoApp(
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
     val writePermission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+    val mediaLocationPermission = Manifest.permission.ACCESS_MEDIA_LOCATION
     
     var hasReadPermission by remember {
         mutableStateOf(
@@ -147,8 +155,14 @@ fun PhotoApp(
             ContextCompat.checkSelfPermission(context, writePermission) == PackageManager.PERMISSION_GRANTED
         )
     }
+    
+    var hasMediaLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, mediaLocationPermission) == PackageManager.PERMISSION_GRANTED
+        )
+    }
 
-    val hasAllPermissions = hasReadPermission && (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q || hasWritePermission)
+    val hasAllPermissions = hasReadPermission && hasMediaLocationPermission && (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q || hasWritePermission)
     
     // 监听权限变化
     LaunchedEffect(Unit) {
@@ -160,6 +174,7 @@ fun PhotoApp(
         while (true) {
             val currentReadPermission = ContextCompat.checkSelfPermission(context, readPermission) == PackageManager.PERMISSION_GRANTED
             val currentWritePermission = ContextCompat.checkSelfPermission(context, writePermission) == PackageManager.PERMISSION_GRANTED
+            val currentMediaLocationPermission = ContextCompat.checkSelfPermission(context, mediaLocationPermission) == PackageManager.PERMISSION_GRANTED
             
             if (currentReadPermission != hasReadPermission) {
                 Log.d("PhotoApp", "读取权限状态变化: $hasReadPermission -> $currentReadPermission")
@@ -168,6 +183,10 @@ fun PhotoApp(
             if (currentWritePermission != hasWritePermission) {
                 Log.d("PhotoApp", "写入权限状态变化: $hasWritePermission -> $currentWritePermission")
                 hasWritePermission = currentWritePermission
+            }
+            if (currentMediaLocationPermission != hasMediaLocationPermission) {
+                Log.d("PhotoApp", "媒体位置权限状态变化: $hasMediaLocationPermission -> $currentMediaLocationPermission")
+                hasMediaLocationPermission = currentMediaLocationPermission
             }
             kotlinx.coroutines.delay(1000) // 每1秒检查一次
         }
