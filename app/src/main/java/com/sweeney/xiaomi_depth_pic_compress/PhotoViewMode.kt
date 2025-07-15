@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ContentResolver
 import android.content.ContentUris
-import android.content.Intent
 import android.content.IntentSender
 
 import android.net.Uri
@@ -27,7 +26,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 import java.io.BufferedInputStream
 import java.io.File
-import android.os.Environment
 
 sealed class PhotoUiState {
     data object Idle : PhotoUiState() // 初始空闲状态
@@ -84,10 +82,7 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         scanJob = viewModelScope.launch {
             try {
                 _uiState.value = PhotoUiState.Scanning
-                
-                // 首先尝试刷新媒体扫描
-                refreshMediaScan()
-                
+
                 val photos = scanPhotosWithDepthInfo()
                 _scannedPhotos.value = photos
                 _selectedPhotos.value = photos.map { it.uri }.toSet()
@@ -100,19 +95,6 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
-    // 刷新媒体扫描
-    private fun refreshMediaScan() {
-        try {
-            val context = getApplication<Application>()
-            val mediaScannerIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
-            mediaScannerIntent.data = Uri.parse("file://${Environment.getExternalStorageDirectory()}/DCIM/Camera")
-            context.sendBroadcast(mediaScannerIntent)
-            Log.d("PhotoViewModel", "已发送媒体扫描广播")
-        } catch (e: Exception) {
-            Log.w("PhotoViewModel", "刷新媒体扫描失败", e)
-        }
-    }
-
     // 移除照片
     fun removePhoto(uri: Uri) {
         _removedPhotos.update { it + uri }
@@ -143,9 +125,12 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 _uiState.value = PhotoUiState.Processing
 
-                val compressionResults = mutableListOf<CompressionResult>()
-                var totalSavedSpace = 0L
+                // 保留现有的压缩结果，而不是重新开始
+                val compressionResults = _compressionResults.value.toMutableList()
+                var totalSavedSpace = _totalSavedSpace.value
 
+                // 使用Set来快速检查是否已经处理过某张照片
+                val processedOriginalPaths = compressionResults.map { it.originalPath }.toSet()
                 for (i in photosToProcess.indices) {
                     // 检查是否被取消
                     if (!isActive) {
@@ -176,33 +161,34 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (result != null) {
-                        compressionResults.add(result)
-                        totalSavedSpace += result.savedSpace
-                        Log.d("PhotoViewModel", "成功压缩照片: ${photo.name}, 节省空间: ${formatFileSize(result.savedSpace)}")
+                        if (processedOriginalPaths.contains(result.originalPath)) {
+                            Log.d("PhotoViewModel", "照片已经压缩过，跳过: ${photo.name}")
+                        } else {
+                            compressionResults.add(result)
+                            totalSavedSpace += result.savedSpace
+                            
+                            // 立即更新压缩结果，确保即使被取消也能保留已完成的压缩
+                            _compressionResults.value = compressionResults.toList()
+                            _totalSavedSpace.value = totalSavedSpace
+                            
+                            Log.d("PhotoViewModel", "成功压缩照片: ${photo.name}, 节省空间: ${formatFileSize(result.savedSpace)}")
+                        }
                     } else {
                         Log.e("PhotoViewModel", "压缩照片失败: ${photo.name}")
                     }
                 }
-
+                
                 // 检查是否被取消
                 if (isActive) {
-                    // 更新压缩结果
-                    _compressionResults.value = compressionResults
-                    _totalSavedSpace.value = totalSavedSpace
-
-                    val successCount = compressionResults.size
+                    val totalCompressedCount = compressionResults.size
                     val totalCount = photosToProcess.size
                     val savedSpaceGB = String.format("%.2f", totalSavedSpace / (1024.0 * 1024.0 * 1024.0))
 
-                    if (successCount == totalCount) {
-                        _uiState.value = PhotoUiState.Success("成功压缩了 $successCount 张照片，总共节省了 ${savedSpaceGB}GB 空间")
-                    } else {
-                        _uiState.value = PhotoUiState.Success("成功压缩了 $successCount/$totalCount 张照片，${totalCount - successCount} 张失败，总共节省了 ${savedSpaceGB}GB 空间")
-                    }
+                    _uiState.value = PhotoUiState.Success("处理完成，总共压缩了 $totalCompressedCount 张照片，节省了 ${savedSpaceGB}GB 空间")
                 } else {
-                    // 如果被取消，恢复到扫描完成状态
+                    // 如果被取消，恢复到扫描完成状态，但保留压缩结果
                     _uiState.value = PhotoUiState.ScanComplete(_scannedPhotos.value)
-                    Log.d("PhotoViewModel", "处理被取消，恢复到扫描完成状态")
+                    Log.d("PhotoViewModel", "处理被取消，恢复到扫描完成状态，保留 ${compressionResults.size} 个压缩结果")
                 }
 
             } catch (e: Exception) {
@@ -335,7 +321,10 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelProcessing() {
         Log.d("PhotoViewModel", "开始取消处理任务")
         processJob?.cancel()
-        Log.d("PhotoViewModel", "处理任务已取消")
+        
+        // 立即恢复到扫描完成状态，保留已经压缩的照片结果
+        _uiState.value = PhotoUiState.ScanComplete(_scannedPhotos.value)
+        Log.d("PhotoViewModel", "处理任务已取消，恢复到扫描完成状态，当前压缩结果数量: ${_compressionResults.value.size}")
     }
     
     // 使用 MediaStore API 删除文件
