@@ -25,13 +25,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.ButtonDefaults
-import com.sweeney.xiaomi_depth_pic_compress.PhotoUiState
 import androidx.compose.material3.*
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,12 +42,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.util.Log
+import androidx.compose.material.icons.filled.Done
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.sweeney.xiaomi_depth_pic_compress.ui.theme.XiaomidepthpiccompressTheme
-import java.io.File
-import com.sweeney.xiaomi_depth_pic_compress.CompressionResult
-import androidx.core.net.toUri
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PhotoViewModel by viewModels()
@@ -100,7 +94,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    
+
     // 检查并请求下一个需要的权限
     private fun checkAndRequestNextPermission() {
         val readPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -153,9 +147,7 @@ fun PhotoApp(
             ContextCompat.checkSelfPermission(context, writePermission) == PackageManager.PERMISSION_GRANTED
         )
     }
-    
-    // 对于删除相册照片，我们可以使用 MediaStore API，不需要 MANAGE_EXTERNAL_STORAGE 权限
-    // Android 10+ 不需要 WRITE_EXTERNAL_STORAGE 权限
+
     val hasAllPermissions = hasReadPermission && (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q || hasWritePermission)
     
     // 监听权限变化
@@ -259,6 +251,8 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                 uiState = uiState,
                 onScanClick = { viewModel.startScan() },
                 onProcessClick = { viewModel.startProcessing() },
+                onSelectAllClick = { viewModel.selectAllPhotos() },
+                onInvertSelectionClick = { viewModel.invertPhotoSelection() },
                 selectedCount = selectedPhotos.size,
                 totalCount = scannedPhotos.size,
                 compressedCount = compressionResults.size,
@@ -303,7 +297,7 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                             if (photo.uri in removedPhotos) {
                                 viewModel.restorePhoto(photo.uri)
                             } else {
-                                viewModel.removePhoto(photo.uri)
+                                viewModel.togglePhotoSelection(photo.uri)
                             }
                         }
                     )
@@ -318,7 +312,7 @@ fun PhotoScreen(viewModel: PhotoViewModel) {
                             if (photo.uri in removedPhotos) {
                                 viewModel.restorePhoto(photo.uri)
                             } else {
-                                viewModel.removePhoto(photo.uri)
+                                viewModel.togglePhotoSelection(photo.uri)
                             }
                         }
                     )
@@ -337,6 +331,8 @@ fun ControlButtons(
     uiState: PhotoUiState,
     onScanClick: () -> Unit,
     onProcessClick: () -> Unit,
+    onSelectAllClick: () -> Unit,
+    onInvertSelectionClick: () -> Unit,
     selectedCount: Int,
     totalCount: Int,
     compressedCount: Int,
@@ -378,7 +374,34 @@ fun ControlButtons(
                 }
             }
 
+            // 添加选择控制按钮
             if (totalCount > 0) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    OutlinedButton(
+                        onClick = onSelectAllClick,
+                        enabled = uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing && uiState !is PhotoUiState.ProcessProgress,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("全选")
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    OutlinedButton(
+                        onClick = onInvertSelectionClick,
+                        enabled = uiState !is PhotoUiState.Scanning && uiState !is PhotoUiState.Processing && uiState !is PhotoUiState.ProcessProgress,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("反选")
+                    }
+                }
+                
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "找到 $totalCount 张深度照片，选中 $selectedCount 张",
@@ -667,10 +690,22 @@ fun PhotoItem(
         modifier = Modifier
             .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
-            .border(
-                width = if (isSelected) 3.dp else 1.dp,
-                color = if (isRemoved) Color.Red else if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                shape = RoundedCornerShape(8.dp)
+            .then(
+                if (isSelected) {
+                    Modifier.border(
+                        width = 3.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                } else if (isRemoved) {
+                    Modifier.border(
+                        width = 2.dp,
+                        color = Color.Red,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                } else {
+                    Modifier
+                }
             )
             .clickable { onClick() }
     ) {
@@ -693,6 +728,28 @@ fun PhotoItem(
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
+                    contentDescription = "已移除",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+        
+        // 选择状态指示器
+        if (isSelected && !isRemoved) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .background(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .padding(4.dp)
+                    .size(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Done,
                     contentDescription = "已移除",
                     tint = Color.White,
                     modifier = Modifier.size(32.dp)

@@ -95,16 +95,39 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
-    // 移除照片
+    // 切换照片选择状态
+    fun togglePhotoSelection(uri: Uri) {
+        if (uri in _selectedPhotos.value) {
+            _selectedPhotos.update { it - uri }
+        } else {
+            _selectedPhotos.update { it + uri }
+        }
+    }
+
+    // 移除照片（暂时隐藏）
     fun removePhoto(uri: Uri) {
         _removedPhotos.update { it + uri }
         _selectedPhotos.update { it - uri }
     }
 
-    // 恢复照片
+    // 恢复照片（从隐藏状态恢复）
     fun restorePhoto(uri: Uri) {
         _removedPhotos.update { it - uri }
         _selectedPhotos.update { it + uri }
+    }
+
+    // 全选照片
+    fun selectAllPhotos() {
+        val availablePhotos = _scannedPhotos.value.filter { it.uri !in _removedPhotos.value }
+        _selectedPhotos.value = availablePhotos.map { it.uri }.toSet()
+    }
+
+    // 反选照片
+    fun invertPhotoSelection() {
+        val availablePhotos = _scannedPhotos.value.filter { it.uri !in _removedPhotos.value }
+        val currentSelected = _selectedPhotos.value
+        val newSelected = availablePhotos.map { it.uri }.toSet() - currentSelected
+        _selectedPhotos.value = newSelected
     }
 
     // 开始处理照片
