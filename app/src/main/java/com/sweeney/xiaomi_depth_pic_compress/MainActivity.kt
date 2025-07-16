@@ -46,6 +46,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.ui.draw.shadow
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.sweeney.xiaomi_depth_pic_compress.ui.theme.XiaomidepthpiccompressTheme
@@ -78,7 +79,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.Q)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -306,7 +306,6 @@ fun PhotoScreen(
                 compressedCount = compressionResults.size,
                 totalSavedSpace = totalSavedSpace
             )
-            // 只要有压缩结果就显示绿色卡片，并且只显示一次
             if (compressionResults.isNotEmpty()) {
                 CompressionResultsSection(
                     compressionResults = compressionResults,
@@ -877,7 +876,8 @@ fun CompressionResultsSection(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(12.dp),
+            .padding(12.dp)
+            .clip(RoundedCornerShape(12.dp)),
         colors = CardDefaults.cardColors(
             containerColor = Color.White
         ),
@@ -916,13 +916,13 @@ fun CompressionResultsSection(
                     text = "已压缩 ${compressionResults.size} 张照片",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF2ECC40)
+                    color = Color(0xFF66BB6A)
                 )
                 val savedSpaceGB = String.format("%.2f", totalSavedSpace / (1024.0 * 1024.0 * 1024.0))
                 Text(
                     text = "总共节省了 $savedSpaceGB GB 空间",
                     fontSize = 14.sp,
-                    color = Color(0xFF2ECC40),
+                    color = Color(0xFF66BB6A),
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -956,7 +956,7 @@ fun CompressionResultItem(result: CompressionResult) {
             .clip(RoundedCornerShape(4.dp))
             .border(
                 width = 1.dp,
-                color = Color.Green,
+                color = Color(0xFF66BB6A),
                 shape = RoundedCornerShape(4.dp)
             )
     ) {
@@ -979,7 +979,7 @@ fun CompressionResultItem(result: CompressionResult) {
         ) {
             Text(
                 text = "-${formatFileSize(result.savedSpace)}",
-                color = Color.Green,
+                color = Color(0xFF66BB6A),
                 fontSize = 8.sp
             )
         }
