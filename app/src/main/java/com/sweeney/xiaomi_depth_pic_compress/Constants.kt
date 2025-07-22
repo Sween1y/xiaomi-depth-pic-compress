@@ -37,7 +37,6 @@ object Constants {
     object LogTags {
         const val PHOTO_COMPRESSOR = "PhotoCompressor"
         const val EXIF_METADATA_PROCESSOR = "ExifMetadataProcessor"
-        const val METADATA_PROCESSOR = "MetadataProcessor"
         const val PHOTO_VIEW_MODEL = "PhotoViewModel"
         const val FILE_UTILS = "FileUtils"
     }
